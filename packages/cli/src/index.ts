@@ -118,6 +118,12 @@ interface DeveloperModuleSummary {
   slug: string;
 }
 
+interface CatalogModuleSummary {
+  id: string;
+  namespace: string;
+  slug: string;
+}
+
 interface ModuleVersionSummary {
   id: string;
   version: string;
@@ -498,20 +504,15 @@ export const publishModule = async (options: PublishOptions): Promise<PublishRes
 
   const moduleID =
     existingModule?.id ||
-    (
-      await apiRequest<{ module: { id: string } }>({
-        method: 'POST',
-        url: `${apiUrl}/modules/developer/modules`,
-        headers,
-        body: {
-          namespace: build.manifest.namespace,
-          slug: build.manifest.slug,
-          name: build.manifest.name,
-          description: build.manifest.description,
-          tags: build.manifest.tags,
-        },
-      })
-    ).module.id;
+    (await resolvePublishModuleID({
+      apiUrl,
+      headers,
+      namespace: build.manifest.namespace,
+      slug: build.manifest.slug,
+      name: build.manifest.name,
+      description: build.manifest.description,
+      tags: build.manifest.tags,
+    }));
 
   const versionResponse = await apiRequest<{ version: { id: string; status: string } }>({
     method: 'POST',
@@ -538,6 +539,44 @@ export const publishModule = async (options: PublishOptions): Promise<PublishRes
     versionStatus: versionResponse.version.status,
     artifactRoot: build.artifactRoot,
   };
+};
+
+const resolvePublishModuleID = async (options: {
+  apiUrl: string;
+  headers: Record<string, string>;
+  namespace: string;
+  slug: string;
+  name: string;
+  description: string;
+  tags: string[];
+}): Promise<string> => {
+  try {
+    return (
+      await apiRequest<{ module: { id: string } }>({
+        method: 'POST',
+        url: `${options.apiUrl}/modules/developer/modules`,
+        headers: options.headers,
+        body: {
+          namespace: options.namespace,
+          slug: options.slug,
+          name: options.name,
+          description: options.description,
+          tags: options.tags,
+        },
+      })
+    ).module.id;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('module namespace and slug already exist')) {
+      throw error;
+    }
+    const detail = await apiRequest<{ module: CatalogModuleSummary }>({
+      method: 'GET',
+      url: `${options.apiUrl}/modules/${encodeURIComponent(options.namespace)}/${encodeURIComponent(options.slug)}`,
+      headers: options.headers,
+    });
+    return detail.module.id;
+  }
 };
 
 export const inspectModule = async (cwd: string): Promise<InspectReport> => {

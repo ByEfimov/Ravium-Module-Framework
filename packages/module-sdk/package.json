@@ -1,6 +1,6 @@
 {
   "name": "@ravium/module-sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Typed SDK for building Ravium modules.",
   "license": "MIT",
   "repository": {

@@ -718,3 +718,95 @@ test('ravium module publish submits draft and reviewable version to API', async 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('ravium module publish submits version for existing catalog module after create conflict', async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), 'ravium-cli-publish-existing-'));
+  const requests = [];
+  const server = http.createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) {
+      chunks.push(chunk);
+    }
+    const bodyText = Buffer.concat(chunks).toString('utf8');
+    const body = bodyText ? JSON.parse(bodyText) : null;
+    requests.push({
+      method: request.method,
+      url: request.url,
+      authorization: request.headers.authorization,
+      body,
+    });
+
+    response.setHeader('content-type', 'application/json');
+    if (request.method === 'GET' && request.url === '/api/v1/modules/developer/modules') {
+      response.end(JSON.stringify({ modules: [] }));
+      return;
+    }
+    if (request.method === 'POST' && request.url === '/api/v1/modules/developer/modules') {
+      response.statusCode = 409;
+      response.end(JSON.stringify({ error: { message: 'module namespace and slug already exist' } }));
+      return;
+    }
+    if (request.method === 'GET' && request.url === '/api/v1/modules/ravium/kitchen-sink-test') {
+      response.end(JSON.stringify({ module: { id: 'module-existing', namespace: 'ravium', slug: 'kitchen-sink-test' } }));
+      return;
+    }
+    if (request.method === 'POST' && request.url === '/api/v1/modules/developer/modules/module-existing/versions') {
+      response.statusCode = 201;
+      response.end(
+        JSON.stringify({
+          version: { id: 'version-1', moduleId: 'module-existing', version: body.version, status: 'pending_review' },
+        }),
+      );
+      return;
+    }
+
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: { code: 'not_found' } }));
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    await runCli(
+      [
+        'module',
+        'init',
+        'kitchen-sink-test',
+        '--namespace',
+        'ravium',
+        '--slug',
+        'kitchen-sink-test',
+        '--name',
+        'Kitchen Sink Test Module',
+        '--template',
+        'kitchen-sink',
+      ],
+      workspace,
+    );
+
+    const moduleDir = path.join(workspace, 'kitchen-sink-test');
+    await runCli(
+      [
+        'module',
+        'publish',
+        '--cwd',
+        moduleDir,
+        '--api-url',
+        `http://127.0.0.1:${port}/api/v1`,
+        '--token',
+        'test-token',
+      ],
+      workspace,
+    );
+
+    assert.equal(requests[1].method, 'POST');
+    assert.equal(requests[1].url, '/api/v1/modules/developer/modules');
+    assert.equal(requests[2].method, 'GET');
+    assert.equal(requests[2].url, '/api/v1/modules/ravium/kitchen-sink-test');
+    assert.equal(requests[3].method, 'POST');
+    assert.equal(requests[3].url, '/api/v1/modules/developer/modules/module-existing/versions');
+    assert.equal(requests[3].body.version, '1.0.0');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
