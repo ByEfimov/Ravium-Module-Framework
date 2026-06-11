@@ -22,8 +22,8 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
-      - run: pnpm -r --filter './packages/*' publish --access public --provenance --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish ./packages/module-sdk --access public --provenance
+      - run: npm publish ./packages/cli --access public --provenance

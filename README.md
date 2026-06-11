@@ -67,7 +67,7 @@ pnpm run check
 
 ## Manual Public Publish
 
-1. Create npm organization `ravium` or get publish access to `@ravium`.
+1. Get publish access to npm organization `@ravium`.
 2. Login:
 
 ```bash
@@ -80,10 +80,18 @@ npm login
 pnpm run publish:public
 ```
 
-## GitHub Actions Publish
+## GitHub Actions Trusted Publishing
 
-Add repository secret:
+Trusted Publishing is configured per npm package:
 
-- `NPM_TOKEN` - npm automation token with publish access to `@ravium`.
+- Package: `@ravium/module-sdk`
+- Package: `@ravium/cli`
+- Publisher: GitHub Actions
+- Owner/user: `ByEfimov`
+- Repository: `Ravium-Module-Framework`
+- Workflow filename: `publish.yml`
+- Allowed action: `npm publish`
 
-Then create a GitHub release or run the `Publish npm packages` workflow manually.
+No `NPM_TOKEN` secret is needed. The workflow uses GitHub OIDC with `id-token: write`.
+
+Create a GitHub release or run the `Publish npm packages` workflow manually after bumping package versions.
