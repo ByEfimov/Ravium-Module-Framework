@@ -381,7 +381,7 @@ export const loadManifest = async (cwd: string): Promise<RaviumModuleManifest> =
 
 export const validateModule = async (cwd: string): Promise<RaviumModuleManifest> => {
   const manifest = await loadManifest(cwd);
-  const referencedFiles = collectReferencedFiles(manifest);
+  const referencedFiles = await collectBuildFiles(cwd, manifest);
   for (const file of referencedFiles) {
     await assertFileExists(path.resolve(cwd, file), file);
   }
@@ -395,7 +395,7 @@ export const buildModule = async (options: BuildOptions): Promise<BuildResult> =
   const artifactRoot = path.resolve(options.outDir, manifest.namespace, manifest.slug, manifest.version);
   await mkdir(artifactRoot, { recursive: true });
 
-  const filesToCopy = collectReferencedFiles(manifest);
+  const filesToCopy = await collectBuildFiles(cwd, manifest);
   const copiedFiles: string[] = [];
   for (const file of filesToCopy) {
     const targetFile = artifactFileName(file);
@@ -406,7 +406,7 @@ export const buildModule = async (options: BuildOptions): Promise<BuildResult> =
   const sizeReport = await buildSizeReport(cwd, artifactRoot, copiedFiles, manifest.dependencies);
   const dependencyReport = await buildDependencyReport(cwd, manifest);
   const checksums = await buildChecksums(artifactRoot, copiedFiles);
-  const artifactRefs = await buildArtifactRefs(cwd, manifest, copiedFiles);
+  const artifactRefs = await buildArtifactRefs(cwd, manifest, filesToCopy, copiedFiles);
   const moderationInput = {
     manifest,
     checksums,
@@ -2148,6 +2148,75 @@ const collectReferencedFiles = (manifest: RaviumModuleManifest): string[] => {
   return [...files].sort();
 };
 
+const sourceImportExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.vue', '.json', '.css', '.html'];
+
+const collectBuildFiles = async (cwd: string, manifest: RaviumModuleManifest): Promise<string[]> => {
+  const files = new Set(collectReferencedFiles(manifest));
+  const queue = [...files];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || !shouldIncludeSourceSnapshot(current)) {
+      continue;
+    }
+    const absolute = path.resolve(cwd, current);
+    let source = '';
+    try {
+      source = await readFile(absolute, 'utf8');
+    } catch {
+      continue;
+    }
+    for (const specifier of collectLocalImportSpecifiers(source)) {
+      const resolved = await resolveLocalImport(cwd, current, specifier);
+      if (resolved && !files.has(resolved)) {
+        files.add(resolved);
+        queue.push(resolved);
+      }
+    }
+  }
+  return [...files].sort();
+};
+
+const collectLocalImportSpecifiers = (source: string): string[] => {
+  const specifiers = new Set<string>();
+  const patterns = [
+    /\bimport\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]/g,
+    /\bexport\s+[^'"]*?\s+from\s+['"]([^'"]+)['"]/g,
+    /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const specifier = match[1]?.trim();
+      if (specifier?.startsWith('.')) {
+        specifiers.add(specifier);
+      }
+    }
+  }
+  return [...specifiers].sort();
+};
+
+const resolveLocalImport = async (cwd: string, importer: string, specifier: string): Promise<string | null> => {
+  const importerDir = path.dirname(importer);
+  const base = path.resolve(cwd, importerDir, specifier);
+  const candidates = path.extname(base)
+    ? [base]
+    : [...sourceImportExtensions.map((extension) => `${base}${extension}`), ...sourceImportExtensions.map((extension) => path.join(base, `index${extension}`))];
+  for (const candidate of candidates) {
+    const relative = path.relative(cwd, candidate).replaceAll('\\', '/');
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      continue;
+    }
+    try {
+      const fileStat = await stat(candidate);
+      if (fileStat.isFile()) {
+        return relative;
+      }
+    } catch {
+      // Keep trying other extension candidates.
+    }
+  }
+  return null;
+};
+
 const addStringField = (files: Set<string>, value: unknown): void => {
   if (typeof value === 'string' && value.trim()) {
     files.add(value);
@@ -2258,6 +2327,7 @@ const detectFunctionExportName = (source: string): string => {
 const buildArtifactRefs = async (
   cwd: string,
   manifest: RaviumModuleManifest,
+  sourceFilesToCopy: string[],
   copiedFiles: string[],
 ): Promise<Record<string, unknown>> => {
   const base = `artifact://${manifest.namespace}/${manifest.slug}/${manifest.version}`;
@@ -2272,15 +2342,24 @@ const buildArtifactRefs = async (
   refs.files = Object.fromEntries(copiedFiles.map((file) => [file, `${base}/${file}`]));
 
   const sourceFiles: Record<string, string> = {};
-  for (const file of collectReferencedFiles(manifest)) {
+  const sourceFileAliases: Record<string, string> = {};
+  for (const file of sourceFilesToCopy) {
     const artifactName = artifactFileName(file);
     if (!copiedFiles.includes(artifactName) || !shouldIncludeSourceSnapshot(file)) {
       continue;
     }
-    sourceFiles[artifactName] = await readFile(path.resolve(cwd, file), 'utf8');
+    const source = await readFile(path.resolve(cwd, file), 'utf8');
+    sourceFiles[file] = source;
+    if (artifactName !== file) {
+      sourceFiles[artifactName] = source;
+      sourceFileAliases[artifactName] = file;
+    }
   }
   if (Object.keys(sourceFiles).length > 0) {
     refs.sourceFiles = sourceFiles;
+  }
+  if (Object.keys(sourceFileAliases).length > 0) {
+    refs.sourceFileAliases = sourceFileAliases;
   }
 
   const functionHandlers: Record<string, Record<string, string>> = {};
@@ -2294,9 +2373,9 @@ const buildArtifactRefs = async (
     if (!copiedFiles.includes(artifactName) || !shouldIncludeSourceSnapshot(runtimeHandler)) {
       continue;
     }
-    const source = sourceFiles[artifactName] || (await readFile(path.resolve(cwd, runtimeHandler), 'utf8'));
+    const source = sourceFiles[runtimeHandler] || sourceFiles[artifactName] || (await readFile(path.resolve(cwd, runtimeHandler), 'utf8'));
     functionHandlers[id] = {
-      sourceFile: artifactName,
+      sourceFile: runtimeHandler,
       exportName: detectFunctionExportName(source),
       artifactRef: `${base}/${artifactName}`,
     };

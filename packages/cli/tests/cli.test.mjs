@@ -229,7 +229,7 @@ test('ravium module validate and build produce immutable artifact metadata', asy
   assert.match(artifactRefs.sourceFiles['src__project-settings.html'], /Kitchen Sink Settings/);
   assert.match(artifactRefs.sourceFiles['src__commands__insert-card.js'], /addComponent/);
   assert.match(artifactRefs.sourceFiles['src__components__MetricCard.vue'], /ravium-module-kitchen-sink/);
-  assert.match(artifactRefs.functionHandlers['kitchen-sink.send-event'].sourceFile, /src__functions__send-event\.ts/);
+  assert.equal(artifactRefs.functionHandlers['kitchen-sink.send-event'].sourceFile, 'src/functions/send-event.ts');
   assert.match(artifactRefs.functionHandlers['kitchen-sink.send-event'].exportName, /run/);
   assert.match(
     artifactRefs.migrationSql['migrations__202605300001_create_kitchen_sink_events.sql'],

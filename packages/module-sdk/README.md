@@ -22,3 +22,31 @@ export default defineRaviumModule({
   },
 })
 ```
+
+## Npm integrations
+
+Use integration helpers when a module wraps an existing npm library:
+
+```js
+import { createVueNpmComponentIntegration } from '@ravium/module-sdk/integrations/vue'
+
+createVueNpmComponentIntegration(ravium, {
+  component: {
+    type: 'chart',
+    label: 'Chart',
+    runtimeRenderer: 'src/components/ChartBlock.vue',
+  },
+  npm: [{ name: 'chart.js', version: '^4.5.0', target: 'runtime' }],
+})
+```
+
+Dedicated presets can hide shared adapter code:
+
+```js
+import { createSwiperCarouselIntegration } from '@ravium/module-sdk/integrations/swiper'
+
+createSwiperCarouselIntegration(ravium, {
+  runtimeRenderer: 'src/components/SwiperCarousel.vue',
+  editorRenderer: 'src/editor-renderer.html',
+})
+```
