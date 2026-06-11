@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ravium/ravium-module-framework.git",
+    "url": "git+https://github.com/ByEfimov/Ravium-Module-Framework.git",
     "directory": "packages/cli"
   },
   "type": "module",
