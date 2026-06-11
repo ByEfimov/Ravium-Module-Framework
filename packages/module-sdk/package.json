@@ -1,0 +1,31 @@
+{
+  "name": "@ravium/module-sdk",
+  "version": "1.0.0",
+  "description": "Typed SDK for building Ravium modules.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ravium/ravium-module-framework.git",
+    "directory": "packages/module-sdk"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
