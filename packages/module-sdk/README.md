@@ -40,13 +40,14 @@ createVueNpmComponentIntegration(ravium, {
 })
 ```
 
-Dedicated presets can hide shared adapter code:
+For lower-level control, register packages directly:
 
 ```js
-import { createSwiperCarouselIntegration } from '@ravium/module-sdk/integrations/swiper'
+import { registerNpmPackage } from '@ravium/module-sdk/integrations/npm'
 
-createSwiperCarouselIntegration(ravium, {
-  runtimeRenderer: 'src/components/SwiperCarousel.vue',
-  editorRenderer: 'src/editor-renderer.html',
-})
+registerNpmPackage(ravium, { name: 'your-runtime-package', version: '^1.0.0', target: 'runtime' })
 ```
+
+Library-specific adapters, settings schemas, renderers, and editor previews
+belong in the module source or in a separate shared package owned by those
+modules. Core `@ravium/module-sdk` stays generic.

@@ -191,6 +191,24 @@ export interface RaviumComponentDefinition {
   [key: string]: unknown;
 }
 
+export interface RaviumSourceFileDefinition {
+  path: string;
+  content: string;
+}
+
+export interface RaviumComponentSlotDefinition {
+  name?: string;
+  label?: string;
+  description?: string;
+  accepts?: string[];
+  required?: boolean;
+  multiple?: boolean;
+  source?: 'props' | 'children' | 'runtime';
+  prop?: string;
+  path?: string;
+  [key: string]: unknown;
+}
+
 export interface RaviumFunctionDefinition {
   id: string;
   label?: string;
@@ -235,6 +253,21 @@ export interface RaviumPageRouteDefinition {
 export interface RaviumModuleBuilder {
   readonly fields: RaviumFieldFactory;
   readonly declarations: { readonly field: RaviumFieldFactory };
+  readonly entrypoints: {
+    editor(entrypoint: string): void;
+    runtimeClient(entrypoint: string): void;
+    runtimeServer(entrypoint: string): void;
+    styles(entrypoint: string | false): void;
+    generated: {
+      editor(entrypoint?: string): void;
+      runtimeClient(entrypoint?: string): void;
+      runtimeServer(entrypoint?: string): void;
+    };
+  };
+  readonly artifacts: {
+    sourceFile(file: RaviumSourceFileDefinition): void;
+    sourceFiles(files: RaviumSourceFileDefinition[]): void;
+  };
   readonly meta: {
     tag(tag: string): void;
     compatibility(value: Record<string, unknown>): void;
@@ -289,6 +322,11 @@ export interface RaviumModuleBuilder {
     props(properties: Record<string, RaviumJSONSchema>, options?: RaviumObjectFieldOptions): RaviumJSONSchema;
     variant(variant: Record<string, unknown>): Record<string, unknown>;
     slot(slot: Record<string, unknown>): Record<string, unknown>;
+    slots: {
+      define(slot: RaviumComponentSlotDefinition): RaviumComponentSlotDefinition;
+      named(name: string, options?: Omit<RaviumComponentSlotDefinition, 'name'>): RaviumComponentSlotDefinition;
+      collection(prop: string, options?: Omit<RaviumComponentSlotDefinition, 'prop' | 'source'>): RaviumComponentSlotDefinition;
+    };
     editorPreview(preview: Record<string, unknown>): Record<string, unknown>;
     editorRenderer(entrypoint: string): string;
     runtimeRenderer(entrypoint: string): string;

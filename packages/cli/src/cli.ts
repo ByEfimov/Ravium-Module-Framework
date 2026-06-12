@@ -27,7 +27,7 @@ const printHelp = (): void => {
   process.stdout.write(`ravium module <command>
 
 Commands:
-  module init <dir> --namespace <namespace> --slug <slug> --name <name> [--template basic|kitchen-sink|swiper]
+  module init <dir> --namespace <namespace> --slug <slug> --name <name> [--template basic|kitchen-sink]
   module dev [--cwd <dir>] [--out <dir>]
   module validate [--cwd <dir>]
   module build [--cwd <dir>] [--out <dir>]
@@ -70,8 +70,8 @@ const main = async (): Promise<void> => {
       if (!namespace) {
         throw new Error('--namespace is required');
       }
-      if (template !== 'basic' && template !== 'kitchen-sink' && template !== 'swiper') {
-        throw new Error('--template must be basic, kitchen-sink, or swiper');
+      if (template !== 'basic' && template !== 'kitchen-sink') {
+        throw new Error('--template must be basic or kitchen-sink');
       }
       const moduleDir = await initModule({ cwd, directory, namespace, slug, name, template });
       process.stdout.write(`created ${moduleDir}\n`);

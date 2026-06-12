@@ -21,14 +21,6 @@
     "./integrations/vue": {
       "types": "./dist/integrations/vue.d.ts",
       "import": "./dist/integrations/vue.js"
-    },
-    "./integrations/swiper": {
-      "types": "./dist/integrations/swiper/index.d.ts",
-      "import": "./dist/integrations/swiper/index.js"
-    },
-    "./integrations/swiper/vue": {
-      "types": "./dist/integrations/swiper/vue.d.ts",
-      "import": "./dist/integrations/swiper/vue.js"
     }
   },
   "files": [
@@ -36,13 +28,9 @@
     "README.md"
   ],
   "peerDependencies": {
-    "swiper": "^12.2.0",
     "vue": "^3.5.0"
   },
   "peerDependenciesMeta": {
-    "swiper": {
-      "optional": true
-    },
     "vue": {
       "optional": true
     }
@@ -54,7 +42,6 @@
     "build": "tsc -p tsconfig.json"
   },
   "devDependencies": {
-    "swiper": "^12.2.0",
     "typescript": "^5.7.2",
     "vue": "^3.5.24"
   }

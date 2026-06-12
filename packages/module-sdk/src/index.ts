@@ -1,5 +1,6 @@
 export type {
   RaviumDefinedModule,
+  RaviumComponentSlotDefinition,
   RaviumFieldFactory,
   RaviumFieldOptions,
   RaviumFunctionDefinition,
@@ -11,18 +12,17 @@ export type {
   RaviumModuleMeta,
   RaviumModulePermission,
   RaviumServerRouteDefinition,
+  RaviumSourceFileDefinition,
   RaviumVariableDefinition,
 } from './framework.js';
 export { createRaviumManifest, defineRaviumModule } from './framework.js';
 export { registerNpmPackage, registerNpmPackages } from './integrations/npm.js';
 export { createVueNpmComponentIntegration } from './integrations/vue.js';
-export { createSwiperCarouselIntegration } from './integrations/swiper/index.js';
 export type {
   RaviumNpmDependencyTarget,
   RaviumNpmPackageDefinition,
 } from './integrations/npm.js';
 export type { RaviumVueNpmComponentIntegration } from './integrations/vue.js';
-export type { SwiperCarouselIntegrationOptions } from './integrations/swiper/index.js';
 
 export type RaviumPermission =
   | 'assets.read'

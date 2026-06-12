@@ -1,12 +1,33 @@
 import type { BuilderContext } from './builder-context.js';
 import { toSchemaObject } from './fields.js';
 import { pushCapability, requestPermission } from './manifest.js';
-import type { RaviumModuleBuilder } from './types.js';
+import type { RaviumComponentSlotDefinition, RaviumModuleBuilder } from './types.js';
 
 type ContentNamespaces = Pick<RaviumModuleBuilder, 'components' | 'functions' | 'variables' | 'references'>;
 
 export const createContentNamespaces = (context: BuilderContext): ContentNamespaces => {
   const { manifest, addExtensionPoint } = context;
+  const defineSlot = (slot: Parameters<ContentNamespaces['components']['slots']['define']>[0]) => slot;
+  const namedSlot = (
+    name: string,
+    options?: Omit<RaviumComponentSlotDefinition, 'name'>,
+  ): RaviumComponentSlotDefinition => {
+    const slot = { ...(options || {}) } as RaviumComponentSlotDefinition;
+    const source = typeof options?.source === 'string' ? options.source : 'runtime';
+    slot.name = name;
+    slot.source = source === 'children' || source === 'props' || source === 'runtime' ? source : 'runtime';
+    return slot;
+  };
+  const slotCollection = (
+    prop: string,
+    options?: Omit<RaviumComponentSlotDefinition, 'prop' | 'source'>,
+  ): RaviumComponentSlotDefinition => {
+    const slot = { ...(options || {}) } as RaviumComponentSlotDefinition;
+    slot.prop = prop;
+    slot.source = 'props';
+    slot.multiple = typeof options?.multiple === 'boolean' ? options.multiple : true;
+    return slot;
+  };
   const defineComponent = (definition: Parameters<ContentNamespaces['components']['define']>[0]): void => {
     const propsSchema = definition.propsSchema || (definition.props ? toSchemaObject(definition.props) : undefined);
     const { props, palette, rightPanel, ...component } = definition;
@@ -56,6 +77,11 @@ export const createContentNamespaces = (context: BuilderContext): ContentNamespa
       props: toSchemaObject,
       variant: (variant) => variant,
       slot: (slot) => slot,
+      slots: {
+        define: defineSlot,
+        named: namedSlot,
+        collection: slotCollection,
+      },
       editorPreview: (preview) => preview,
       editorRenderer: (entrypoint) => entrypoint,
       runtimeRenderer: (entrypoint) => entrypoint,

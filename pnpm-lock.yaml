@@ -29,9 +29,6 @@ importers:
 
   packages/module-sdk:
     devDependencies:
-      swiper:
-        specifier: ^12.2.0
-        version: 12.2.0
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -121,10 +118,6 @@ packages:
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
     engines: {node: '>=0.10.0'}
-
-  swiper@12.2.0:
-    resolution: {integrity: sha512-K8uXsBZU6ME97Ia3xbBge8IRCnR1lOmIILzvY/jGVic7dSTQ530s3uO8RvXbPUtkkXLWIwmZLRPbtDxRWVAFdg==}
-    engines: {node: '>= 4.7.0'}
 
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
@@ -238,8 +231,6 @@ snapshots:
       source-map-js: 1.2.1
 
   source-map-js@1.2.1: {}
-
-  swiper@12.2.0: {}
 
   typescript@5.9.3: {}
 
