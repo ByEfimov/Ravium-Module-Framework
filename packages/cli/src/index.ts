@@ -395,18 +395,27 @@ export const buildModule = async (options: BuildOptions): Promise<BuildResult> =
   const artifactRoot = path.resolve(options.outDir, manifest.namespace, manifest.slug, manifest.version);
   await mkdir(artifactRoot, { recursive: true });
 
-  const filesToCopy = await collectBuildFiles(cwd, manifest);
+  const runtimeSupportFiles = collectRuntimeSupportFiles(manifest);
+  const runtimeSupportPaths = new Set(runtimeSupportFiles.map((file) => file.path));
+  const filesToCopy = (await collectBuildFiles(cwd, manifest)).filter((file) => !runtimeSupportPaths.has(file));
   const copiedFiles: string[] = [];
   for (const file of filesToCopy) {
     const targetFile = artifactFileName(file);
     await copyFile(path.resolve(cwd, file), path.join(artifactRoot, targetFile));
     copiedFiles.push(targetFile);
   }
+  for (const file of runtimeSupportFiles) {
+    const targetFile = artifactFileName(file.path);
+    await writeFile(path.join(artifactRoot, targetFile), file.content);
+    if (!copiedFiles.includes(targetFile)) {
+      copiedFiles.push(targetFile);
+    }
+  }
 
   const sizeReport = await buildSizeReport(cwd, artifactRoot, copiedFiles, manifest.dependencies);
   const dependencyReport = await buildDependencyReport(cwd, manifest);
   const checksums = await buildChecksums(artifactRoot, copiedFiles);
-  const artifactRefs = await buildArtifactRefs(cwd, manifest, filesToCopy, copiedFiles);
+  const artifactRefs = await buildArtifactRefs(cwd, manifest, filesToCopy, copiedFiles, runtimeSupportFiles);
   const moderationInput = {
     manifest,
     checksums,
@@ -2332,6 +2341,7 @@ const buildArtifactRefs = async (
   manifest: RaviumModuleManifest,
   sourceFilesToCopy: string[],
   copiedFiles: string[],
+  runtimeSupportFiles: RuntimeSupportFile[] = collectRuntimeSupportFiles(manifest),
 ): Promise<Record<string, unknown>> => {
   const base = `artifact://${manifest.namespace}/${manifest.slug}/${manifest.version}`;
   const refs: Record<string, unknown> = {
@@ -2358,7 +2368,7 @@ const buildArtifactRefs = async (
       sourceFileAliases[artifactName] = file;
     }
   }
-  addRuntimeSupportSourceFiles(manifest, sourceFiles);
+  addRuntimeSupportSourceFiles(runtimeSupportFiles, sourceFiles, sourceFileAliases);
   if (Object.keys(sourceFiles).length > 0) {
     refs.sourceFiles = sourceFiles;
   }
@@ -2413,18 +2423,39 @@ const buildArtifactRefs = async (
   return refs;
 };
 
-const addRuntimeSupportSourceFiles = (
+interface RuntimeSupportFile {
+  path: string;
+  content: string;
+}
+
+const collectRuntimeSupportFiles = (
   manifest: RaviumModuleManifest,
-  sourceFiles: Record<string, string>,
-): void => {
+): RuntimeSupportFile[] => {
   const supportFiles = readArrayRecords(manifest.capabilities?.runtimeSupportFiles);
+  const deduped = new Map<string, string>();
   for (const file of supportFiles) {
     const filePath = readString(file.path);
     const content = typeof file.content === 'string' ? file.content : '';
     if (!filePath || !content || !looksLikeLocalReferencedFile(filePath)) {
       continue;
     }
-    sourceFiles[filePath] = content;
+    deduped.set(filePath, content);
+  }
+  return [...deduped.entries()].map(([filePath, content]) => ({ path: filePath, content }));
+};
+
+const addRuntimeSupportSourceFiles = (
+  supportFiles: RuntimeSupportFile[],
+  sourceFiles: Record<string, string>,
+  sourceFileAliases: Record<string, string>,
+): void => {
+  for (const file of supportFiles) {
+    const artifactName = artifactFileName(file.path);
+    sourceFiles[file.path] = file.content;
+    if (artifactName !== file.path) {
+      sourceFiles[artifactName] = file.content;
+      sourceFileAliases[artifactName] = file.path;
+    }
   }
 };
 
