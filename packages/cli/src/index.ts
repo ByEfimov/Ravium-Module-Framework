@@ -2306,6 +2306,9 @@ const collectCapabilityReferencedFiles = (value: unknown, files: Set<string>, pa
     return;
   }
   for (const [key, nested] of Object.entries(value)) {
+    if (key === 'runtimeSupportFiles') {
+      continue;
+    }
     if (capabilityFileKeys.has(key)) {
       addLocalStringField(files, nested);
       continue;
@@ -2355,6 +2358,7 @@ const buildArtifactRefs = async (
       sourceFileAliases[artifactName] = file;
     }
   }
+  addRuntimeSupportSourceFiles(manifest, sourceFiles);
   if (Object.keys(sourceFiles).length > 0) {
     refs.sourceFiles = sourceFiles;
   }
@@ -2407,6 +2411,21 @@ const buildArtifactRefs = async (
   }
 
   return refs;
+};
+
+const addRuntimeSupportSourceFiles = (
+  manifest: RaviumModuleManifest,
+  sourceFiles: Record<string, string>,
+): void => {
+  const supportFiles = readArrayRecords(manifest.capabilities?.runtimeSupportFiles);
+  for (const file of supportFiles) {
+    const filePath = readString(file.path);
+    const content = typeof file.content === 'string' ? file.content : '';
+    if (!filePath || !content || !looksLikeLocalReferencedFile(filePath)) {
+      continue;
+    }
+    sourceFiles[filePath] = content;
+  }
 };
 
 const buildChecksums = async (artifactRoot: string, files: string[]): Promise<Record<string, unknown>> => {

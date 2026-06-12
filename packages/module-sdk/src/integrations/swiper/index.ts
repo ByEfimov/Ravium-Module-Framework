@@ -1,5 +1,6 @@
 import type { RaviumModuleBuilder } from '../../framework/types.js';
 import { createVueNpmComponentIntegration } from '../vue.js';
+import { createSwiperCarouselRuntimeSupportFiles } from './runtime-support.js';
 import { carouselSettingsSchema, editorStyleDeclarations, projectSettingsSchema } from './schema.js';
 
 export interface SwiperCarouselIntegrationOptions {
@@ -8,8 +9,8 @@ export interface SwiperCarouselIntegrationOptions {
   category?: string;
   runtimeRenderer?: string;
   editorRenderer?: string;
+  runtimeSupportBasePath?: string;
   swiperVersion?: string;
-  sdkVersion?: string;
   projectSettingsPage?: false | Record<string, unknown>;
   projectImages?: false | Record<string, unknown>;
 }
@@ -60,8 +61,10 @@ export const createSwiperCarouselIntegration = (
     ],
     npm: [
       { name: 'swiper', version: options.swiperVersion || '^12.2.0', target: 'runtime' },
-      { name: '@ravium/module-sdk', version: options.sdkVersion || '^1.0.2', target: 'runtime' },
     ],
+    capabilities: {
+      runtimeSupportFiles: createSwiperCarouselRuntimeSupportFiles(options.runtimeSupportBasePath),
+    },
   });
 };
 
