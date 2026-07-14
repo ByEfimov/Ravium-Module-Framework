@@ -16,6 +16,9 @@ library option builders that already live in module support files.
   or integration `runtimeSupportFiles`.
 - Generated apps copy relative imports from runtime renderers into the generated runtime module
   folder, so runtime, view, and deployed app use the same module code.
+- `ravium module build` also emits `artifactRefs.runtimeComponentBundles` for Vue runtime
+  renderers. Platform `/application` and `/view` must prefer this browser bundle over legacy
+  editor iframe renderers; iframe is only a backward-compatible fallback for old artifacts.
 - Module props stored by Ravium contain only user overrides; runtime support merges defaults.
 
 ## Forbidden
@@ -25,6 +28,8 @@ library option builders that already live in module support files.
 - Inlining large npm library import/config maps into the renderer when a support helper can own them.
 - Making generated apps depend on unpublished SDK runtime imports.
 - Adding module-specific logic to the compiler when a generic support-file contract is enough.
+- Using editor iframe HTML as the primary preview for a component that ships a Vue runtime
+  renderer.
 
 ## Preferred Shape
 

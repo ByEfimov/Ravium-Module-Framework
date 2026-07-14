@@ -1,7 +1,8 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, copyFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
@@ -412,10 +413,24 @@ export const buildModule = async (options: BuildOptions): Promise<BuildResult> =
     }
   }
 
+  const runtimeComponentBundles = await buildRuntimeComponentBundles(cwd, artifactRoot, manifest);
+  for (const file of runtimeComponentBundles.files) {
+    if (!copiedFiles.includes(file)) {
+      copiedFiles.push(file);
+    }
+  }
+
   const sizeReport = await buildSizeReport(cwd, artifactRoot, copiedFiles, manifest.dependencies);
   const dependencyReport = await buildDependencyReport(cwd, manifest);
   const checksums = await buildChecksums(artifactRoot, copiedFiles);
-  const artifactRefs = await buildArtifactRefs(cwd, manifest, filesToCopy, copiedFiles, runtimeSupportFiles);
+  const artifactRefs = await buildArtifactRefs(
+    cwd,
+    manifest,
+    filesToCopy,
+    copiedFiles,
+    runtimeSupportFiles,
+    runtimeComponentBundles.refs,
+  );
   const moderationInput = {
     manifest,
     checksums,
@@ -1550,6 +1565,212 @@ const artifactFileName = (file: string): string => {
   return normalized.replaceAll('/', '__');
 };
 
+interface RuntimeComponentBundleReference {
+  componentType: string;
+  renderer: string;
+  key: string;
+  format: 'iife-vue-global';
+  globalName: string;
+  artifact: string;
+  source: string;
+  cssArtifact?: string;
+  css?: string;
+}
+
+interface RuntimeComponentBundleBuildResult {
+  files: string[];
+  refs: Record<string, RuntimeComponentBundleReference>;
+}
+
+const normalizeRuntimeGlobalNamePart = (value: string): string =>
+  value
+    .trim()
+    .replace(/[^A-Za-z0-9_$]+/g, '_')
+    .replace(/^([^A-Za-z_$])/, '_$1') || 'Module';
+
+const runtimeComponentBundleKey = (manifest: RaviumModuleManifest, componentType: string): string =>
+  `${manifest.namespace}/${manifest.slug}/${componentType}`;
+
+const runtimeComponentBundleBaseName = (
+  manifest: RaviumModuleManifest,
+  componentType: string,
+  renderer: string,
+): string => {
+  const hash = createHash('sha256')
+    .update(`${manifest.namespace}/${manifest.slug}/${manifest.version}/${componentType}/${renderer}`)
+    .digest('hex')
+    .slice(0, 10);
+  const typePart = componentType
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'component';
+  return `runtime-component-${typePart}-${hash}`;
+};
+
+const runtimeComponentGlobalName = (manifest: RaviumModuleManifest, componentType: string, renderer: string): string =>
+  `RaviumModule_${normalizeRuntimeGlobalNamePart(manifest.namespace)}_${normalizeRuntimeGlobalNamePart(
+    manifest.slug,
+  )}_${normalizeRuntimeGlobalNamePart(componentType)}_${createHash('sha256').update(renderer).digest('hex').slice(0, 8)}`;
+
+const isRuntimeComponentBundleCandidate = (renderer: string): boolean => {
+  if (!renderer || /\.html?$/i.test(renderer)) {
+    return false;
+  }
+  return ['.vue', '.js', '.mjs', '.ts', '.tsx', '.jsx'].includes(path.extname(renderer).toLowerCase());
+};
+
+const collectRuntimeComponentBundleEntries = (
+  manifest: RaviumModuleManifest,
+): Array<{ componentType: string; renderer: string }> => {
+  const entries = new Map<string, { componentType: string; renderer: string }>();
+  for (const component of manifest.components) {
+    const componentType = readString(component.type);
+    const renderer = readString(component.runtimeRenderer);
+    if (!componentType || !isRuntimeComponentBundleCandidate(renderer)) {
+      continue;
+    }
+    entries.set(runtimeComponentBundleKey(manifest, componentType), { componentType, renderer });
+  }
+  return [...entries.values()].sort((left, right) => left.componentType.localeCompare(right.componentType));
+};
+
+const readDirectoryFiles = async (directory: string): Promise<string[]> => {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await readDirectoryFiles(entryPath)));
+      continue;
+    }
+    if (entry.isFile()) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+};
+
+const buildRuntimeComponentBundleEntrySource = (
+  componentFileUrl: string,
+  registryKey: string,
+): string => `import Component from ${JSON.stringify(componentFileUrl)};
+
+const runtimeGlobal = globalThis.__RAVIUM_MODULE_RUNTIME__ || (globalThis.__RAVIUM_MODULE_RUNTIME__ = {});
+const registry = runtimeGlobal.components || (runtimeGlobal.components = {});
+registry[${JSON.stringify(registryKey)}] = Component;
+export default Component;
+`;
+
+const buildRuntimeComponentBundles = async (
+  cwd: string,
+  artifactRoot: string,
+  manifest: RaviumModuleManifest,
+): Promise<RuntimeComponentBundleBuildResult> => {
+  const entries = collectRuntimeComponentBundleEntries(manifest);
+  if (entries.length === 0) {
+    return { files: [], refs: {} };
+  }
+
+  const [{ build }, vuePluginModule] = await Promise.all([
+    import('vite'),
+    import('@vitejs/plugin-vue'),
+  ]);
+  const vuePlugin = vuePluginModule.default;
+  const files: string[] = [];
+  const refs: Record<string, RuntimeComponentBundleReference> = {};
+
+  for (const entry of entries) {
+    const rendererPath = path.resolve(cwd, entry.renderer);
+    await assertFileExists(rendererPath, entry.renderer);
+
+    const registryKey = runtimeComponentBundleKey(manifest, entry.componentType);
+    const fileBase = runtimeComponentBundleBaseName(manifest, entry.componentType, entry.renderer);
+    const globalName = runtimeComponentGlobalName(manifest, entry.componentType, entry.renderer);
+    const tmpRoot = await mkdtemp(path.join(tmpdir(), 'ravium-runtime-component-'));
+    try {
+      const entryPath = path.join(tmpRoot, 'entry.js');
+      await writeFile(
+        entryPath,
+        buildRuntimeComponentBundleEntrySource(pathToFileURL(rendererPath).href, registryKey),
+        'utf8',
+      );
+
+      await build({
+        configFile: false,
+        root: cwd,
+        logLevel: 'silent',
+        plugins: [vuePlugin()],
+        build: {
+          outDir: tmpRoot,
+          emptyOutDir: false,
+          minify: false,
+          sourcemap: false,
+          cssCodeSplit: false,
+          lib: {
+            entry: entryPath,
+            name: globalName,
+            formats: ['iife'],
+            fileName: () => `${fileBase}.js`,
+          },
+          rollupOptions: {
+            external: ['vue'],
+            output: {
+              globals: {
+                vue: '__RAVIUM_MODULE_RUNTIME__.vue',
+              },
+              inlineDynamicImports: true,
+              entryFileNames: `${fileBase}.js`,
+              assetFileNames: `${fileBase}.[name][extname]`,
+            },
+          },
+        },
+      });
+
+      const outputFiles = (await readDirectoryFiles(tmpRoot)).filter((file) => file !== entryPath);
+      const jsFile = outputFiles.find((file) => path.basename(file) === `${fileBase}.js`);
+      if (!jsFile) {
+        throw new Error(`runtime component bundle was not emitted for ${entry.componentType}`);
+      }
+
+      const jsArtifactName = `${fileBase}.js`;
+      const source = await readFile(jsFile, 'utf8');
+      await writeFile(path.join(artifactRoot, jsArtifactName), source, 'utf8');
+      files.push(jsArtifactName);
+
+      const cssFile = outputFiles.find((file) => path.extname(file).toLowerCase() === '.css');
+      let cssArtifactName: string | undefined;
+      let cssSource: string | undefined;
+      if (cssFile) {
+        cssArtifactName = `${fileBase}.css`;
+        cssSource = await readFile(cssFile, 'utf8');
+        await writeFile(path.join(artifactRoot, cssArtifactName), cssSource, 'utf8');
+        files.push(cssArtifactName);
+      }
+
+      refs[registryKey] = {
+        componentType: entry.componentType,
+        renderer: entry.renderer,
+        key: registryKey,
+        format: 'iife-vue-global',
+        globalName,
+        artifact: `artifact://${manifest.namespace}/${manifest.slug}/${manifest.version}/${jsArtifactName}`,
+        source,
+        ...(cssArtifactName && cssSource
+          ? {
+              cssArtifact: `artifact://${manifest.namespace}/${manifest.slug}/${manifest.version}/${cssArtifactName}`,
+              css: cssSource,
+            }
+          : {}),
+      };
+    } finally {
+      await rm(tmpRoot, { recursive: true, force: true });
+    }
+  }
+
+  return { files, refs };
+};
+
 const sourceSnapshotExtensions = new Set([
   '.css',
   '.html',
@@ -1643,6 +1864,7 @@ const buildArtifactRefs = async (
   sourceFilesToCopy: string[],
   copiedFiles: string[],
   runtimeSupportFiles: RuntimeSupportFile[] = collectRuntimeSupportFiles(manifest),
+  runtimeComponentBundles: Record<string, RuntimeComponentBundleReference> = {},
 ): Promise<Record<string, unknown>> => {
   const base = `artifact://${manifest.namespace}/${manifest.slug}/${manifest.version}`;
   const refs: Record<string, unknown> = {
@@ -1675,6 +1897,9 @@ const buildArtifactRefs = async (
   }
   if (Object.keys(sourceFileAliases).length > 0) {
     refs.sourceFileAliases = sourceFileAliases;
+  }
+  if (Object.keys(runtimeComponentBundles).length > 0) {
+    refs.runtimeComponentBundles = runtimeComponentBundles;
   }
 
   const functionHandlers: Record<string, Record<string, string>> = {};
