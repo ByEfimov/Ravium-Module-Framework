@@ -37,8 +37,18 @@ createVueNpmComponentIntegration(ravium, {
     runtimeRenderer: 'src/components/ChartBlock.vue',
   },
   npm: [{ name: 'chart.js', version: '^4.5.0', target: 'runtime' }],
+  runtimeSupportFiles: [
+    {
+      path: 'src/components/chart/options.js',
+      content: 'export const createChartOptions = (props) => props',
+    },
+  ],
 })
 ```
+
+Put reusable runtime adapter code in `runtimeSupportFiles` or source files imported by
+the renderer. Keep Vue renderers thin: template, attrs/slots wiring, and calls to
+support helpers. Do not duplicate defaults or library option maps inside renderers.
 
 For lower-level control, register packages directly:
 

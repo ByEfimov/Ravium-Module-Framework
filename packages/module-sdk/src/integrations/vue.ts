@@ -2,6 +2,7 @@ import type {
   RaviumComponentDefinition,
   RaviumJSONSchema,
   RaviumModuleBuilder,
+  RaviumSourceFileDefinition,
   RaviumVariableDefinition,
 } from '../framework/types.js';
 import { registerNpmPackages, type RaviumNpmPackageDefinition } from './npm.js';
@@ -22,6 +23,7 @@ export interface RaviumVueNpmComponentIntegration {
   };
   variables?: RaviumVariableDefinition[];
   projectImages?: false | Record<string, unknown>;
+  runtimeSupportFiles?: RaviumSourceFileDefinition[];
   capabilities?: Record<string, Record<string, unknown> | Record<string, unknown>[]>;
 }
 
@@ -51,6 +53,10 @@ export const createVueNpmComponentIntegration = (
   }
 
   registerNpmPackages(ravium, integration.npm || []);
+
+  if (integration.runtimeSupportFiles?.length) {
+    ravium.artifacts.sourceFiles(integration.runtimeSupportFiles);
+  }
 
   for (const [name, payload] of Object.entries(integration.capabilities || {})) {
     if (Array.isArray(payload)) {
