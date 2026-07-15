@@ -113,6 +113,21 @@ export interface PublishResult {
   artifactRoot: string;
 }
 
+export interface AiBridgeConnectOptions {
+  cwd: string;
+  apiUrl: string;
+  pairingCode: string;
+  workspaceName?: string;
+}
+
+export interface AiBridgeConnectResult {
+  sessionID: string;
+  projectID: string;
+  workspaceName: string;
+  expiresAt: string;
+  token: string;
+}
+
 interface DeveloperModuleSummary {
   id: string;
   namespace: string;
@@ -601,6 +616,44 @@ const resolvePublishModuleID = async (options: {
     });
     return detail.module.id;
   }
+};
+
+export const connectAiBridge = async (options: AiBridgeConnectOptions): Promise<AiBridgeConnectResult> => {
+  const apiUrl = options.apiUrl.trim().replace(/\/+$/, '');
+  const pairingCode = options.pairingCode.trim();
+  if (!apiUrl) {
+    throw new Error('--api-url or RAVIUM_API_URL is required');
+  }
+  if (!pairingCode) {
+    throw new Error('pairing code is required');
+  }
+  const workspaceName = (options.workspaceName || path.basename(path.resolve(options.cwd)) || 'local-module').trim();
+  const response = await apiRequest<{
+    token?: string;
+    session?: {
+      id?: string;
+      projectId?: string;
+      workspaceName?: string;
+      expiresAt?: string;
+    };
+  }>({
+    method: 'POST',
+    url: `${apiUrl}/ai/bridge/connect`,
+    body: {
+      pairingCode,
+      workspaceName,
+    },
+  });
+  if (!response.token || !response.session?.id) {
+    throw new Error('bridge connect response is invalid');
+  }
+  return {
+    sessionID: response.session.id,
+    projectID: response.session.projectId || '',
+    workspaceName: response.session.workspaceName || workspaceName,
+    expiresAt: response.session.expiresAt || '',
+    token: response.token,
+  };
 };
 
 export const inspectModule = async (cwd: string): Promise<InspectReport> => {

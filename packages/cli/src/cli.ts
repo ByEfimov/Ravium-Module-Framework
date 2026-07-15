@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   buildModule,
   checkMigrations,
+  connectAiBridge,
   devModule,
   initModule,
   inspectAdvisory,
@@ -23,8 +24,21 @@ const readOption = (args: string[], name: string, fallback = ''): string => {
 
 const hasFlag = (args: string[], name: string): boolean => args.includes(name);
 
+const positionalArgs = (args: string[]): string[] => {
+  const result: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg.startsWith('--')) {
+      index += 1;
+      continue;
+    }
+    result.push(arg);
+  }
+  return result;
+};
+
 const printHelp = (): void => {
-  process.stdout.write(`ravium module <command>
+  process.stdout.write(`ravium <namespace> <command>
 
 Commands:
   module init <dir> --namespace <namespace> --slug <slug> --name <name> [--template basic|kitchen-sink]
@@ -38,6 +52,7 @@ Commands:
   module deps [--cwd <dir>]
   module migrate:check [--cwd <dir>]
   module advisory [--cwd <dir>]
+  ai connect <pairing-code> [--cwd <dir>] [--api-url <url>] [--workspace-name <name>]
 `);
 };
 
@@ -52,8 +67,13 @@ const main = async (): Promise<void> => {
     return;
   }
 
-  if (args[0] !== 'module') {
-    throw new Error('expected command namespace: module');
+  const namespace = args[0];
+  if (namespace === 'ai') {
+    await runAiCommand(args[1], args.slice(2));
+    return;
+  }
+  if (namespace !== 'module') {
+    throw new Error('expected command namespace: module or ai');
   }
 
   const command = args[1];
@@ -141,6 +161,34 @@ const main = async (): Promise<void> => {
     }
     default:
       throw new Error(`unknown module command: ${command || ''}`);
+  }
+};
+
+const runAiCommand = async (command: string | undefined, commandArgs: string[]): Promise<void> => {
+  const cwd = path.resolve(readOption(commandArgs, '--cwd', process.cwd()));
+  switch (command) {
+    case 'connect': {
+      const pairingCode = positionalArgs(commandArgs)[0] || '';
+      const apiUrl = readOption(commandArgs, '--api-url', process.env.RAVIUM_API_URL || '');
+      const workspaceName = readOption(commandArgs, '--workspace-name', path.basename(cwd));
+      const result = await connectAiBridge({
+        cwd,
+        apiUrl,
+        pairingCode,
+        workspaceName,
+      });
+      printJSON({
+        status: 'connected',
+        sessionID: result.sessionID,
+        projectID: result.projectID,
+        workspaceName: result.workspaceName,
+        expiresAt: result.expiresAt,
+        token: result.token,
+      });
+      return;
+    }
+    default:
+      throw new Error(`unknown ai command: ${command || ''}`);
   }
 };
 

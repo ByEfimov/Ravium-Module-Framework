@@ -645,6 +645,83 @@ test('ravium module publish submits draft and reviewable version to API', async 
   }
 });
 
+test('ravium ai connect exchanges pairing code with bridge API', async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), 'ravium-cli-ai-connect-'));
+  const requests = [];
+  const server = http.createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) {
+      chunks.push(chunk);
+    }
+    const bodyText = Buffer.concat(chunks).toString('utf8');
+    const body = bodyText ? JSON.parse(bodyText) : null;
+    requests.push({
+      method: request.method,
+      url: request.url,
+      body,
+    });
+
+    response.setHeader('content-type', 'application/json');
+    if (request.method === 'POST' && request.url === '/api/v1/ai/bridge/connect') {
+      response.end(
+        JSON.stringify({
+          token: 'rvb_test_token',
+          session: {
+            id: 'session-1',
+            projectId: 'project-1',
+            workspaceName: body.workspaceName,
+            status: 'connected',
+            expiresAt: '2026-07-15T12:30:00Z',
+          },
+        }),
+      );
+      return;
+    }
+
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: { code: 'not_found' } }));
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const result = await runCli(
+      [
+        'ai',
+        'connect',
+        'RV-PAIR-CODE',
+        '--api-url',
+        `http://127.0.0.1:${port}/api/v1`,
+        '--workspace-name',
+        'local-habit-module',
+      ],
+      workspace,
+    );
+    const output = JSON.parse(result.stdout);
+    assert.equal(requests[0].method, 'POST');
+    assert.equal(requests[0].url, '/api/v1/ai/bridge/connect');
+    assert.equal(requests[0].body.pairingCode, 'RV-PAIR-CODE');
+    assert.equal(requests[0].body.workspaceName, 'local-habit-module');
+    assert.equal(output.status, 'connected');
+    assert.equal(output.sessionID, 'session-1');
+    assert.equal(output.token, 'rvb_test_token');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('ravium ai connect requires pairing code and api url', async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), 'ravium-cli-ai-connect-required-'));
+  await assert.rejects(
+    runCli(['ai', 'connect', '--api-url', 'http://127.0.0.1:9/api/v1'], workspace),
+    (error) => error.stderr.includes('pairing code is required'),
+  );
+  await assert.rejects(
+    runCli(['ai', 'connect', 'RV-PAIR-CODE'], workspace),
+    (error) => error.stderr.includes('--api-url or RAVIUM_API_URL is required'),
+  );
+});
+
 test('ravium module publish submits version for existing catalog module after create conflict', async () => {
   const workspace = await mkdtemp(path.join(tmpdir(), 'ravium-cli-publish-existing-'));
   const requests = [];
