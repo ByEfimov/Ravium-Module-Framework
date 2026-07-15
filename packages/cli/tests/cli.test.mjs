@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -704,7 +704,132 @@ test('ravium ai connect exchanges pairing code with bridge API', async () => {
     assert.equal(requests[0].body.workspaceName, 'local-habit-module');
     assert.equal(output.status, 'connected');
     assert.equal(output.sessionID, 'session-1');
-    assert.equal(output.token, 'rvb_test_token');
+    assert.equal(output.token, undefined);
+    const bridgeConfig = JSON.parse(await readFile(path.join(workspace, '.ravium/ai-bridge.json'), 'utf8'));
+    assert.equal(bridgeConfig.token, 'rvb_test_token');
+    assert.ok(output.configPath.endsWith('/.ravium/ai-bridge.json'));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('ravium ai sync applies bridge draft files and marks drafts synced', async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), 'ravium-cli-ai-sync-'));
+  await writeFile(path.join(workspace, 'package.json'), '{}\n', 'utf8');
+  await writeFile(path.join(workspace, 'ravium.module.json'), '{}\n', 'utf8');
+  await mkdir(path.join(workspace, '.ravium'), { recursive: true });
+  await writeFile(
+    path.join(workspace, '.ravium/ai-bridge.json'),
+    JSON.stringify({
+      apiUrl: '',
+      token: 'rvb_test_token',
+      sessionID: 'session-1',
+      projectID: 'project-1',
+      workspaceName: 'local-module',
+      expiresAt: '2026-07-15T12:30:00Z',
+      updatedAt: '2026-07-15T12:00:00Z',
+    }),
+    'utf8',
+  );
+  const requests = [];
+  const server = http.createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) {
+      chunks.push(chunk);
+    }
+    const bodyText = Buffer.concat(chunks).toString('utf8');
+    const body = bodyText ? JSON.parse(bodyText) : null;
+    requests.push({
+      method: request.method,
+      url: request.url,
+      body,
+    });
+
+    response.setHeader('content-type', 'application/json');
+    if (request.method === 'POST' && request.url === '/api/v1/ai/bridge/drafts') {
+      response.end(
+        JSON.stringify({
+          drafts: [
+            {
+              id: 'draft-1',
+              status: 'draft',
+              codePatchRequest: {
+                files: [{ path: 'src/generated.ts', content: 'export const generated = true;\\n' }],
+              },
+            },
+            {
+              id: 'draft-2',
+              status: 'synced',
+              codePatchRequest: { files: [{ path: 'src/skipped.ts', content: '' }] },
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    if (request.method === 'PATCH' && request.url === '/api/v1/ai/bridge/drafts/draft-1') {
+      response.end(JSON.stringify({ draft: { id: 'draft-1', status: body.status } }));
+      return;
+    }
+
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: { code: 'not_found' } }));
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    const result = await runCli(['ai', 'sync', '--cwd', workspace, '--api-url', `http://127.0.0.1:${port}/api/v1`], workspace);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.status, 'synced');
+    assert.equal(output.appliedDrafts, 1);
+    assert.equal(output.skippedDrafts, 1);
+    assert.deepEqual(output.filesWritten, ['src/generated.ts']);
+    assert.equal(await readFile(path.join(workspace, 'src/generated.ts'), 'utf8'), 'export const generated = true;\\n');
+    assert.equal(requests[0].body.token, 'rvb_test_token');
+    assert.equal(requests[1].method, 'PATCH');
+    assert.equal(requests[1].body.status, 'synced');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('ravium ai sync rejects files outside workspace', async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), 'ravium-cli-ai-sync-escape-'));
+  await mkdir(path.join(workspace, '.ravium'), { recursive: true });
+  await writeFile(
+    path.join(workspace, '.ravium/ai-bridge.json'),
+    JSON.stringify({ apiUrl: '', token: 'rvb_test_token' }),
+    'utf8',
+  );
+  const requests = [];
+  const server = http.createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) {
+      chunks.push(chunk);
+    }
+    requests.push({ method: request.method, url: request.url });
+    response.setHeader('content-type', 'application/json');
+    response.end(
+      JSON.stringify({
+        drafts: [
+          {
+            id: 'draft-escape',
+            status: 'draft',
+            codePatchRequest: { files: [{ path: '../escape.ts', content: 'bad' }] },
+          },
+        ],
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = server.address().port;
+    await assert.rejects(
+      runCli(['ai', 'sync', '--cwd', workspace, '--api-url', `http://127.0.0.1:${port}/api/v1`], workspace),
+      (error) => error.stderr.includes('escapes workspace'),
+    );
+    assert.equal(requests.length, 1);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

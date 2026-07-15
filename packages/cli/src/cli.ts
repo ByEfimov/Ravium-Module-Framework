@@ -11,6 +11,7 @@ import {
   inspectDependencies,
   inspectModule,
   publishModule,
+  syncAiBridge,
   validateModule,
 } from './index.js';
 
@@ -53,6 +54,7 @@ Commands:
   module migrate:check [--cwd <dir>]
   module advisory [--cwd <dir>]
   ai connect <pairing-code> [--cwd <dir>] [--api-url <url>] [--workspace-name <name>]
+  ai sync [--cwd <dir>] [--api-url <url>] [--token <token>] [--dry-run]
 `);
 };
 
@@ -183,7 +185,22 @@ const runAiCommand = async (command: string | undefined, commandArgs: string[]):
         projectID: result.projectID,
         workspaceName: result.workspaceName,
         expiresAt: result.expiresAt,
-        token: result.token,
+        configPath: result.configPath,
+      });
+      return;
+    }
+    case 'sync': {
+      const apiUrl = readOption(commandArgs, '--api-url', process.env.RAVIUM_API_URL || '');
+      const token = readOption(commandArgs, '--token', process.env.RAVIUM_AI_BRIDGE_TOKEN || '');
+      const result = await syncAiBridge({
+        cwd,
+        apiUrl,
+        token,
+        dryRun: hasFlag(commandArgs, '--dry-run'),
+      });
+      printJSON({
+        status: 'synced',
+        ...result,
       });
       return;
     }

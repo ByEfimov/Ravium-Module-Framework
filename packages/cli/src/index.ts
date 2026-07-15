@@ -126,6 +126,37 @@ export interface AiBridgeConnectResult {
   workspaceName: string;
   expiresAt: string;
   token: string;
+  configPath: string;
+}
+
+export interface AiBridgeSyncOptions {
+  cwd: string;
+  apiUrl?: string;
+  token?: string;
+  dryRun?: boolean;
+}
+
+export interface AiBridgeSyncResult {
+  appliedDrafts: number;
+  skippedDrafts: number;
+  filesWritten: string[];
+  dryRun: boolean;
+}
+
+interface AiBridgeConfig {
+  apiUrl: string;
+  token: string;
+  sessionID: string;
+  projectID: string;
+  workspaceName: string;
+  expiresAt: string;
+  updatedAt: string;
+}
+
+interface AiModuleDraftSummary {
+  id: string;
+  status: string;
+  codePatchRequest?: unknown;
 }
 
 interface DeveloperModuleSummary {
@@ -647,13 +678,65 @@ export const connectAiBridge = async (options: AiBridgeConnectOptions): Promise<
   if (!response.token || !response.session?.id) {
     throw new Error('bridge connect response is invalid');
   }
+  const configPath = await writeAiBridgeConfig(path.resolve(options.cwd), {
+    apiUrl,
+    token: response.token,
+    sessionID: response.session.id,
+    projectID: response.session.projectId || '',
+    workspaceName: response.session.workspaceName || workspaceName,
+    expiresAt: response.session.expiresAt || '',
+    updatedAt: new Date().toISOString(),
+  });
   return {
     sessionID: response.session.id,
     projectID: response.session.projectId || '',
     workspaceName: response.session.workspaceName || workspaceName,
     expiresAt: response.session.expiresAt || '',
     token: response.token,
+    configPath,
   };
+};
+
+export const syncAiBridge = async (options: AiBridgeSyncOptions): Promise<AiBridgeSyncResult> => {
+  const cwd = path.resolve(options.cwd);
+  const config = await readAiBridgeConfig(cwd);
+  const apiUrl = (options.apiUrl || config?.apiUrl || '').trim().replace(/\/+$/, '');
+  const token = (options.token || config?.token || '').trim();
+  if (!apiUrl) {
+    throw new Error('--api-url, RAVIUM_API_URL, or .ravium/ai-bridge.json apiUrl is required');
+  }
+  if (!token) {
+    throw new Error('--token or .ravium/ai-bridge.json token is required');
+  }
+  const response = await apiRequest<{ drafts?: AiModuleDraftSummary[] }>({
+    method: 'POST',
+    url: `${apiUrl}/ai/bridge/drafts`,
+    body: { token },
+  });
+  const drafts = Array.isArray(response.drafts) ? response.drafts : [];
+  const result: AiBridgeSyncResult = {
+    appliedDrafts: 0,
+    skippedDrafts: 0,
+    filesWritten: [],
+    dryRun: Boolean(options.dryRun),
+  };
+  for (const draft of drafts) {
+    if (draft.status !== 'draft') {
+      result.skippedDrafts += 1;
+      continue;
+    }
+    const filesWritten = await applyBridgeDraft(cwd, draft.codePatchRequest, Boolean(options.dryRun));
+    result.filesWritten.push(...filesWritten);
+    result.appliedDrafts += 1;
+    if (!options.dryRun) {
+      await apiRequest<{ draft?: AiModuleDraftSummary }>({
+        method: 'PATCH',
+        url: `${apiUrl}/ai/bridge/drafts/${encodeURIComponent(draft.id)}`,
+        body: { token, status: 'synced' },
+      });
+    }
+  }
+  return result;
 };
 
 export const inspectModule = async (cwd: string): Promise<InspectReport> => {
@@ -2399,6 +2482,80 @@ const apiRequest = async <Response>(options: {
     throw new Error(message);
   }
   return payload as Response;
+};
+
+const aiBridgeConfigPath = (cwd: string): string => path.join(cwd, '.ravium', 'ai-bridge.json');
+
+const writeAiBridgeConfig = async (cwd: string, config: AiBridgeConfig): Promise<string> => {
+  const configPath = aiBridgeConfigPath(cwd);
+  await mkdir(path.dirname(configPath), { recursive: true });
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  return configPath;
+};
+
+const readAiBridgeConfig = async (cwd: string): Promise<AiBridgeConfig | null> => {
+  try {
+    const raw = await readFile(aiBridgeConfigPath(cwd), 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!isRecord(parsed)) {
+      return null;
+    }
+    return {
+      apiUrl: typeof parsed.apiUrl === 'string' ? parsed.apiUrl : '',
+      token: typeof parsed.token === 'string' ? parsed.token : '',
+      sessionID: typeof parsed.sessionID === 'string' ? parsed.sessionID : '',
+      projectID: typeof parsed.projectID === 'string' ? parsed.projectID : '',
+      workspaceName: typeof parsed.workspaceName === 'string' ? parsed.workspaceName : '',
+      expiresAt: typeof parsed.expiresAt === 'string' ? parsed.expiresAt : '',
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '',
+    };
+  } catch {
+    return null;
+  }
+};
+
+const resolveBridgeDraftPath = (root: string, relativePath: string): string => {
+  const cleanPath = relativePath.trim();
+  if (!cleanPath) {
+    throw new Error('bridge draft file path is required');
+  }
+  const targetPath = path.resolve(root, cleanPath);
+  if (targetPath !== root && !targetPath.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`bridge draft file path escapes workspace: ${relativePath}`);
+  }
+  return targetPath;
+};
+
+const applyBridgeDraft = async (cwd: string, codePatchRequest: unknown, dryRun: boolean): Promise<string[]> => {
+  if (!isRecord(codePatchRequest) || !Array.isArray(codePatchRequest.files)) {
+    throw new Error('bridge draft codePatchRequest.files is required');
+  }
+  const root = path.resolve(cwd);
+  const filesWritten: string[] = [];
+  for (const file of codePatchRequest.files) {
+    if (!isRecord(file)) {
+      throw new Error('bridge draft file entry is invalid');
+    }
+    const relativePath = typeof file.path === 'string' ? file.path : '';
+    const targetPath = resolveBridgeDraftPath(root, relativePath);
+    const action = typeof file.action === 'string' ? file.action : 'write';
+    if (action === 'delete' || action === 'remove') {
+      if (!dryRun) {
+        await rm(targetPath, { force: true });
+      }
+      filesWritten.push(path.relative(root, targetPath));
+      continue;
+    }
+    if (typeof file.content !== 'string') {
+      throw new Error(`bridge draft file content is required: ${relativePath}`);
+    }
+    if (!dryRun) {
+      await mkdir(path.dirname(targetPath), { recursive: true });
+      await writeFile(targetPath, file.content, 'utf8');
+    }
+    filesWritten.push(path.relative(root, targetPath));
+  }
+  return filesWritten;
 };
 
 const assertFileExists = async (filePath: string, displayPath: string): Promise<void> => {
