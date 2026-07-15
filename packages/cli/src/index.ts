@@ -140,7 +140,14 @@ export interface AiBridgeSyncResult {
   appliedDrafts: number;
   skippedDrafts: number;
   filesWritten: string[];
+  commandResults: AiBridgeCommandResult[];
   dryRun: boolean;
+}
+
+export interface AiBridgeCommandResult {
+  command: string;
+  status: 'succeeded' | 'skipped';
+  summary: Record<string, unknown>;
 }
 
 interface AiBridgeConfig {
@@ -157,6 +164,13 @@ interface AiModuleDraftSummary {
   id: string;
   status: string;
   codePatchRequest?: unknown;
+}
+
+interface AiBridgeDraftCommand {
+  command: string;
+  args?: string[];
+  outDir?: string;
+  dryRun?: boolean;
 }
 
 interface DeveloperModuleSummary {
@@ -718,6 +732,7 @@ export const syncAiBridge = async (options: AiBridgeSyncOptions): Promise<AiBrid
     appliedDrafts: 0,
     skippedDrafts: 0,
     filesWritten: [],
+    commandResults: [],
     dryRun: Boolean(options.dryRun),
   };
   for (const draft of drafts) {
@@ -726,7 +741,9 @@ export const syncAiBridge = async (options: AiBridgeSyncOptions): Promise<AiBrid
       continue;
     }
     const filesWritten = await applyBridgeDraft(cwd, draft.codePatchRequest, Boolean(options.dryRun));
+    const commandResults = await runBridgeDraftCommands(cwd, apiUrl, draft.codePatchRequest, Boolean(options.dryRun));
     result.filesWritten.push(...filesWritten);
+    result.commandResults.push(...commandResults);
     result.appliedDrafts += 1;
     if (!options.dryRun) {
       await apiRequest<{ draft?: AiModuleDraftSummary }>({
@@ -2556,6 +2573,100 @@ const applyBridgeDraft = async (cwd: string, codePatchRequest: unknown, dryRun: 
     filesWritten.push(path.relative(root, targetPath));
   }
   return filesWritten;
+};
+
+const readBridgeDraftCommands = (codePatchRequest: unknown): AiBridgeDraftCommand[] => {
+  if (!isRecord(codePatchRequest) || !Array.isArray(codePatchRequest.commands)) {
+    return [];
+  }
+  return codePatchRequest.commands.map((command) => {
+    if (!isRecord(command)) {
+      throw new Error('bridge draft command entry is invalid');
+    }
+    const name = typeof command.command === 'string' ? command.command : '';
+    return {
+      command: name.trim(),
+      args: Array.isArray(command.args) ? command.args.filter((arg): arg is string => typeof arg === 'string') : [],
+      outDir: typeof command.outDir === 'string' ? command.outDir : undefined,
+      dryRun: command.dryRun === true,
+    };
+  });
+};
+
+const normalizeBridgeCommandName = (command: string): string => {
+  const clean = command.trim().toLowerCase();
+  if (clean === 'validate' || clean === 'module.validate' || clean === 'ravium module validate') {
+    return 'validate';
+  }
+  if (clean === 'build' || clean === 'module.build' || clean === 'ravium module build') {
+    return 'build';
+  }
+  if (clean === 'publish' || clean === 'review' || clean === 'module.publish' || clean === 'ravium module publish') {
+    return 'publish';
+  }
+  throw new Error(`bridge draft command is not allowed: ${command}`);
+};
+
+const runBridgeDraftCommands = async (
+  cwd: string,
+  apiUrl: string,
+  codePatchRequest: unknown,
+  dryRun: boolean,
+): Promise<AiBridgeCommandResult[]> => {
+  const commands = readBridgeDraftCommands(codePatchRequest);
+  const results: AiBridgeCommandResult[] = [];
+  for (const command of commands) {
+    const normalized = normalizeBridgeCommandName(command.command);
+    if (dryRun || command.dryRun) {
+      results.push({ command: normalized, status: 'skipped', summary: { reason: 'dry-run' } });
+      continue;
+    }
+    if (normalized === 'validate') {
+      const manifest = await validateModule(cwd);
+      results.push({
+        command: normalized,
+        status: 'succeeded',
+        summary: {
+          module: `${manifest.namespace}/${manifest.slug}`,
+          version: manifest.version,
+        },
+      });
+      continue;
+    }
+    if (normalized === 'build') {
+      const outDir = resolveBridgeDraftPath(cwd, command.outDir || 'dist');
+      const build = await buildModule({ cwd, outDir });
+      results.push({
+        command: normalized,
+        status: 'succeeded',
+        summary: {
+          artifactRoot: build.artifactRoot,
+          module: `${build.manifest.namespace}/${build.manifest.slug}`,
+          version: build.manifest.version,
+        },
+      });
+      continue;
+    }
+    if (normalized === 'publish') {
+      const token = process.env.RAVIUM_ACCESS_TOKEN || '';
+      if (!token) {
+        throw new Error('RAVIUM_ACCESS_TOKEN is required for bridge publish command');
+      }
+      const outDir = resolveBridgeDraftPath(cwd, command.outDir || 'dist');
+      const publish = await publishModule({ cwd, outDir, apiUrl, token });
+      results.push({
+        command: normalized,
+        status: 'succeeded',
+        summary: {
+          moduleID: publish.moduleID,
+          versionID: publish.versionID,
+          versionStatus: publish.versionStatus,
+        },
+      });
+      continue;
+    }
+  }
+  return results;
 };
 
 const assertFileExists = async (filePath: string, displayPath: string): Promise<void> => {

@@ -754,7 +754,48 @@ test('ravium ai sync applies bridge draft files and marks drafts synced', async 
               id: 'draft-1',
               status: 'draft',
               codePatchRequest: {
-                files: [{ path: 'src/generated.ts', content: 'export const generated = true;\\n' }],
+                files: [
+                  {
+                    path: 'ravium.module.json',
+                    content: JSON.stringify({
+                      id: 'ravium.bridge-draft',
+                      namespace: 'ravium',
+                      slug: 'bridge-draft',
+                      name: 'Bridge Draft',
+                      description: '',
+                      version: '1.0.0',
+                      license: 'MIT',
+                      author: { name: 'AI' },
+                      raviumApiVersion: '1.0.0',
+                      sdkVersionRange: '^1.0.0',
+                      compatibility: {},
+                      tags: [],
+                      entrypoints: {
+                        editor: 'src/editor.ts',
+                        runtimeClient: 'src/runtime-client.ts',
+                        runtimeServer: 'src/runtime-server.ts',
+                      },
+                      extensionPoints: {},
+                      permissions: {},
+                      settingsSchema: {},
+                      components: [],
+                      variables: [],
+                      functions: [],
+                      routes: [],
+                      migrations: [],
+                      dependencies: {},
+                      moduleDependencies: [],
+                      assets: [],
+                      sizeBudget: {},
+                      pricing: {},
+                    }, null, 2),
+                  },
+                  { path: 'src/editor.ts', content: 'export const registerEditorExtensions = () => {};\\n' },
+                  { path: 'src/runtime-client.ts', content: 'export const setupRuntimeClient = () => {};\\n' },
+                  { path: 'src/runtime-server.ts', content: 'export const setupRuntimeServer = () => {};\\n' },
+                  { path: 'src/generated.ts', content: 'export const generated = true;\\n' },
+                ],
+                commands: [{ command: 'validate' }],
               },
             },
             {
@@ -784,7 +825,9 @@ test('ravium ai sync applies bridge draft files and marks drafts synced', async 
     assert.equal(output.status, 'synced');
     assert.equal(output.appliedDrafts, 1);
     assert.equal(output.skippedDrafts, 1);
-    assert.deepEqual(output.filesWritten, ['src/generated.ts']);
+    assert.equal(output.commandResults[0].command, 'validate');
+    assert.equal(output.commandResults[0].status, 'succeeded');
+    assert.ok(output.filesWritten.includes('src/generated.ts'));
     assert.equal(await readFile(path.join(workspace, 'src/generated.ts'), 'utf8'), 'export const generated = true;\\n');
     assert.equal(requests[0].body.token, 'rvb_test_token');
     assert.equal(requests[1].method, 'PATCH');
